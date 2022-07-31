@@ -1,6 +1,10 @@
 #![warn(clippy::pedantic)]
 
-use std::{cell::Cell, time::Duration};
+use std::{
+    cell::Cell,
+    fmt::{self, Display},
+    time::Duration,
+};
 
 use tokio::time::Instant;
 
@@ -9,9 +13,9 @@ use tokio::time::Instant;
 /// [leaky bucket]: https://en.wikipedia.org/wiki/Leaky_bucket
 #[derive(Debug)]
 pub struct LeakyBucket {
-    max_capacity: u16,
+    capacity: u16,
     leak_per_second: u8,
-    last_capacity: Cell<u16>,
+    last_points: Cell<u16>,
     last_time: Cell<LastTime>,
 }
 
@@ -23,33 +27,25 @@ struct LastTime {
 
 impl LeakyBucket {
     /// Creates an empty leaky bucket.
-    ///
-    /// Remember that an _empty_ bucket has its _capacity_ equal to the
-    /// [`max_capacity`].
-    ///
-    /// [`max_capacity`]: Self::max_capacity.
     #[inline]
     #[must_use]
     pub fn empty(max_capacity: u16, leak_per_second: u8) -> Self {
-        Self::with_capacity(max_capacity, max_capacity, leak_per_second)
+        Self::with_points(0, max_capacity, leak_per_second)
     }
 
-    /// Creates a leaky bucket given a capacity.
+    /// Creates a leaky bucket given the number of stored _points_.
     ///
     /// # Panics
     ///
-    /// Panics if `capacity` exceed `max_capacity`.
+    /// Panics if `points` exceed `capacity`.
     #[must_use]
-    pub fn with_capacity(capacity: u16, max_capacity: u16, leak_per_second: u8) -> Self {
-        assert!(
-            capacity <= max_capacity,
-            "Capacity cannot exceed max_capacity"
-        );
+    pub fn with_points(points: u16, capacity: u16, leak_per_second: u8) -> Self {
+        assert!(points <= capacity, "Points cannot exceed capacity");
 
         Self {
-            max_capacity,
+            capacity,
             leak_per_second,
-            last_capacity: Cell::new(capacity),
+            last_points: Cell::new(points),
             last_time: Cell::new(LastTime {
                 instant: Instant::now(),
                 remainder_nanos: 0,
@@ -57,16 +53,16 @@ impl LeakyBucket {
         }
     }
 
-    /// Returns the maximum capacity of the bucket.
-    pub const fn max_capacity(&self) -> u16 {
-        self.max_capacity
+    /// Returns the capacity of the bucket.
+    pub const fn capacity(&self) -> u16 {
+        self.capacity
     }
 
-    /// Returns the current capacity of the bucket.
+    /// Returns the current points stored in the bucket.
     ///
     /// The internal state is updated depending on the last time the leaky bucket is _actively_
     /// used.
-    pub fn capacity(&self) -> u16 {
+    pub fn points(&self) -> u16 {
         let now = Instant::now();
 
         let LastTime {
@@ -77,19 +73,46 @@ impl LeakyBucket {
         let delta_secs = u16::try_from(delta.as_secs()).unwrap_or(u16::MAX);
         let leak = delta_secs.saturating_mul(u16::from(self.leak_per_second));
 
-        let capacity = self
-            .last_capacity
-            .get()
-            .saturating_add(leak)
-            .min(self.max_capacity);
+        let points = self.last_points.get().saturating_sub(leak);
         let remainder_nanos = delta.subsec_nanos();
 
-        self.last_capacity.set(capacity);
+        self.last_points.set(points);
         self.last_time.set(LastTime {
             instant: now,
             remainder_nanos,
         });
-        capacity
+        points
+    }
+
+    /// Adds some points to the buckets, returning an error if the capacity would be exceeded.
+    ///
+    /// # Errors
+    ///
+    /// If the capacity would be exceeded while adding the points, the actual points are left
+    /// unchanged and an error is returned.
+    pub fn add(&self, points: u16) -> Result<(), MaxCapacityError> {
+        let points = self.points().saturating_add(points);
+        if points <= self.capacity {
+            self.last_points.set(points);
+            Ok(())
+        } else {
+            Err(MaxCapacityError)
+        }
+    }
+
+    /// Returns the number of available points.
+    pub fn available(&self) -> u16 {
+        self.capacity - self.points()
+    }
+}
+
+/// An error representing an operation that would make the points exceed the capacity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MaxCapacityError;
+
+impl Display for MaxCapacityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Cannot add point to leak bucket, capacity exceeded")
     }
 }
 
@@ -101,44 +124,57 @@ mod tests {
 
     #[test]
     fn creation() {
-        let bucket = LeakyBucket::with_capacity(5, 10, 2);
-        assert_eq!(bucket.max_capacity, 10);
-        assert_eq!(bucket.last_capacity, Cell::new(5));
+        let bucket = LeakyBucket::with_points(5, 10, 2);
+        assert_eq!(bucket.capacity, 10);
+        assert_eq!(bucket.last_points, Cell::new(5));
         assert_eq!(bucket.leak_per_second, 2);
         assert_eq!(bucket.last_time.get().remainder_nanos, 0);
 
         let bucket = LeakyBucket::empty(10, 2);
-        assert_eq!(bucket.max_capacity, 10);
-        assert_eq!(bucket.last_capacity, Cell::new(10));
+        assert_eq!(bucket.capacity, 10);
+        assert_eq!(bucket.last_points, Cell::new(0));
         assert_eq!(bucket.leak_per_second, 2);
         assert_eq!(bucket.last_time.get().remainder_nanos, 0);
     }
 
     #[tokio::test]
     async fn stable_empty() {
-        let bucket = LeakyBucket::with_capacity(5, 5, 1);
-        assert_eq!(bucket.last_capacity.get(), 5);
-        assert_eq!(bucket.capacity(), 5);
+        let bucket = LeakyBucket::empty(5, 1);
+        assert_eq!(bucket.last_points.get(), 0);
+        assert_eq!(bucket.points(), 0);
 
         sleep(Duration::from_millis(1500)).await;
-        assert_eq!(bucket.capacity(), 5);
+        assert_eq!(bucket.points(), 0);
     }
 
     #[tokio::test]
     async fn leaking() {
-        let bucket = LeakyBucket::with_capacity(0, 5, 1);
-        assert_eq!(bucket.capacity(), 0);
+        let bucket = LeakyBucket::with_points(5, 5, 1);
+        assert_eq!(bucket.points(), 5);
 
         sleep(Duration::from_millis(1500)).await;
-        assert_eq!(bucket.capacity(), 1);
+        assert_eq!(bucket.points(), 4);
 
         sleep(Duration::from_millis(500)).await;
-        assert_eq!(bucket.capacity(), 2);
+        assert_eq!(bucket.points(), 3);
 
         sleep(Duration::from_millis(2000)).await;
-        assert_eq!(bucket.capacity(), 4);
+        assert_eq!(bucket.points(), 1);
 
         sleep(Duration::from_millis(2000)).await;
-        assert_eq!(bucket.capacity(), 5);
+        assert_eq!(bucket.points(), 0);
+    }
+
+    #[tokio::test]
+    async fn add_points() {
+        let bucket = LeakyBucket::empty(10, 1);
+        assert!(bucket.add(7).is_ok());
+        assert_eq!(bucket.points(), 7);
+        assert!(bucket.add(4).is_err());
+        assert_eq!(bucket.points(), 7);
+
+        sleep(Duration::from_secs(1)).await;
+        assert!(bucket.add(4).is_ok());
+        assert_eq!(bucket.points(), 10);
     }
 }
