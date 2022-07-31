@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1.20.1", features = ["macros", "time", "rt"] }
+
+[features]
