@@ -11,6 +11,7 @@ use axum::{
 };
 use database::PartialEntry;
 use error::Error;
+use rand::{thread_rng, Rng};
 use tokio::{
     join,
     sync::{
@@ -83,9 +84,17 @@ enum Message {
 }
 
 async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
+    const SPORADIC_POINTS_PROBABILITY: f64 = 0.15;
+    const SPORADIC_POINTS_MAX: u16 = 4;
+
     let bucket = LeakyBucket::empty(MAX_BUCKET_CAPACITY, LEAK_PER_SECOND);
+    let mut rng = thread_rng();
 
     while let Some(message) = receiver.recv().await {
+        if rng.gen_bool(SPORADIC_POINTS_PROBABILITY) {
+            bucket.saturating_add(rng.gen_range(1..=SPORADIC_POINTS_MAX));
+        }
+
         match message {
             Message::Query { query, replier } => {
                 let cost = calc_query_cost(&query);
