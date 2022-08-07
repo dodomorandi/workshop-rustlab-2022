@@ -20,6 +20,8 @@ use tokio::{
         oneshot,
     },
 };
+use tower_http::trace::TraceLayer;
+use tracing::info;
 use workshop_rustlab_2022::{
     database::{
         calc_query_cost, Entry, ServerQuery, DEFAULT_PAGE_SIZE, LEAK_PER_SECOND,
@@ -41,6 +43,8 @@ const BUFFER_SIZE: usize = 32;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let database: Vec<Entry> =
         serde_json::from_str(RAW_DATABASE).expect("unable to parse JSON database");
 
@@ -49,13 +53,15 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(root))
-        .layer(Extension(Arc::new(app_state)));
+        .layer(Extension(Arc::new(app_state)))
+        .layer(TraceLayer::new_for_http());
 
     let axum_future =
         axum::Server::bind(&"127.0.0.1:8080".parse().unwrap()).serve(app.into_make_service());
 
     let handler_future = handler(&database, receiver);
 
+    info!("Listening on 127.0.0.1:8080");
     let (axum_result, ()) = join!(axum_future, handler_future);
     axum_result.unwrap();
 }
