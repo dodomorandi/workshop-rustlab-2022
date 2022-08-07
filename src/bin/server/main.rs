@@ -1,11 +1,12 @@
 mod database;
 mod error;
 
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
 use axum::{
     extract::Query,
-    response::{IntoResponse, Response},
+    http::{header::HeaderName, HeaderValue},
+    response::{IntoResponse, IntoResponseParts, Response, ResponseParts},
     routing::get,
     Extension, Json, Router,
 };
@@ -24,7 +25,8 @@ use workshop_rustlab_2022::{
         calc_query_cost, Entry, ServerQuery, DEFAULT_PAGE_SIZE, LEAK_PER_SECOND,
         MAX_BUCKET_CAPACITY,
     },
-    LeakyBucket,
+    leaky_bucket::MaxCapacityError,
+    LeakyBucket, BUCKET_CAPACITY_HEADER, BUCKET_POINTS_HEADER,
 };
 
 const RAW_DATABASE: &str = include_str!("../../../assets/database.json");
@@ -79,8 +81,35 @@ async fn root(
 enum Message {
     Query {
         query: ServerQuery,
-        replier: oneshot::Sender<Result<Response, error::Error>>,
+        replier: oneshot::Sender<Result<(BucketInfo, Response), error::Error>>,
     },
+}
+
+#[derive(Debug)]
+struct BucketInfo {
+    points: u16,
+    capacity: u16,
+}
+
+impl IntoResponseParts for BucketInfo {
+    type Error = Infallible;
+
+    fn into_response_parts(self, mut res: ResponseParts) -> Result<ResponseParts, Self::Error> {
+        res.headers_mut().extend(
+            [
+                (BUCKET_POINTS_HEADER, self.points),
+                (BUCKET_CAPACITY_HEADER, self.capacity),
+            ]
+            .into_iter()
+            .map(|(header, value)| {
+                (
+                    Some(HeaderName::from_static(header)),
+                    HeaderValue::from(value),
+                )
+            }),
+        );
+        Ok(res)
+    }
 }
 
 async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
@@ -98,15 +127,19 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
         match message {
             Message::Query { query, replier } => {
                 let cost = calc_query_cost(&query);
-                if bucket.add(cost).is_err() {
-                    replier
-                        .send(Err(Error::NotEnoughCapacity {
+                let capacity = bucket.capacity();
+                let bucket_points = match bucket.add(cost) {
+                    Ok(points) => points,
+                    Err(MaxCapacityError(points)) => {
+                        let error = Error::NotEnoughCapacity {
                             request: cost,
-                            available: bucket.available(),
-                        }))
-                        .unwrap();
-                    continue;
-                }
+                            points,
+                            capacity,
+                        };
+                        replier.send(Err(error)).unwrap();
+                        continue;
+                    }
+                };
 
                 let entries: Vec<_> = database
                     .chunks(query.page_size.unwrap_or(DEFAULT_PAGE_SIZE).into())
@@ -126,8 +159,12 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
                     })
                     .unwrap_or_default();
                 let response = Json(entries).into_response();
+                let bucket_info = BucketInfo {
+                    points: bucket_points,
+                    capacity,
+                };
 
-                replier.send(Ok(response)).unwrap();
+                replier.send(Ok((bucket_info, response))).unwrap();
             }
         }
     }

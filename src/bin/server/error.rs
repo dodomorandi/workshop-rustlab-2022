@@ -5,9 +5,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use crate::BucketInfo;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
-    NotEnoughCapacity { request: u16, available: u16 },
+    NotEnoughCapacity {
+        request: u16,
+        points: u16,
+        capacity: u16,
+    },
 }
 
 impl Display for Error {
@@ -15,10 +21,17 @@ impl Display for Error {
         use Error::*;
 
         match self {
-            NotEnoughCapacity { request, available } => write!(
+            NotEnoughCapacity {
+                request,
+                points,
+                capacity,
+            } => {
+                let available = capacity - points;
+                write!(
                 f,
-                "Not enough capacity. Requested {request} points, available {available} points"
-            ),
+                "Not enough capacity. Requested {request} points, available {available}/{capacity} points"
+            )
+            }
         }
     }
 }
@@ -27,10 +40,18 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         use Error::*;
 
-        let response = match self {
-            err @ NotEnoughCapacity { .. } => (StatusCode::TOO_MANY_REQUESTS, err.to_string()),
-        };
-
-        response.into_response()
+        match self {
+            error @ NotEnoughCapacity {
+                points, capacity, ..
+            } => {
+                let bucket_info = BucketInfo { points, capacity };
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    bucket_info,
+                    error.to_string(),
+                )
+                    .into_response()
+            }
+        }
     }
 }

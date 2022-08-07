@@ -94,12 +94,13 @@ impl LeakyBucket {
     /// If the capacity would be exceeded while adding the points, the actual points are left
     /// unchanged and an error is returned.
     pub fn add(&self, points: u16) -> Result<u16, MaxCapacityError> {
-        let points = self.points().saturating_add(points);
+        let cur_points = self.points();
+        let points = cur_points.saturating_add(points);
         if points <= self.capacity {
             self.last_points.set(points);
             Ok(points)
         } else {
-            Err(MaxCapacityError)
+            Err(MaxCapacityError(cur_points))
         }
     }
 
@@ -122,11 +123,14 @@ impl LeakyBucket {
 
 /// An error representing an operation that would make the points exceed the capacity.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MaxCapacityError;
+pub struct MaxCapacityError(
+    /// Points in the bucket.
+    pub u16,
+);
 
 impl Display for MaxCapacityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Cannot add point to leak bucket, capacity exceeded")
+        f.write_str("Cannot add to leaky bucket with {self.0} points, capacity exceeded")
     }
 }
 
