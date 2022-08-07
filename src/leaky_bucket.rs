@@ -84,20 +84,34 @@ impl LeakyBucket {
         points
     }
 
-    /// Adds some points to the buckets, returning an error if the capacity would be exceeded.
+    /// Adds some points to the buckets.
+    ///
+    /// Returns the new amount of points in the bucket or an error if the capacity would be
+    /// exceeded.
     ///
     /// # Errors
     ///
     /// If the capacity would be exceeded while adding the points, the actual points are left
     /// unchanged and an error is returned.
-    pub fn add(&self, points: u16) -> Result<(), MaxCapacityError> {
+    pub fn add(&self, points: u16) -> Result<u16, MaxCapacityError> {
         let points = self.points().saturating_add(points);
         if points <= self.capacity {
             self.last_points.set(points);
-            Ok(())
+            Ok(points)
         } else {
             Err(MaxCapacityError)
         }
+    }
+
+    /// Add some points to the bucket, saturating to its capacity.
+    ///
+    /// This will always succeds, because not all points are necessarily added. This behavior makes
+    /// the function useful to _artificially_ add points to the bucket, but it should not be used
+    /// in order to run an operation that must fail if the bucket is too full.
+    pub fn saturating_add(&self, points: u16) -> u16 {
+        let points = self.points().saturating_add(points).min(self.capacity);
+        self.last_points.set(points);
+        points
     }
 
     /// Returns the number of available points.
@@ -168,13 +182,24 @@ mod tests {
     #[tokio::test]
     async fn add_points() {
         let bucket = LeakyBucket::empty(10, 1);
-        assert!(bucket.add(7).is_ok());
+        assert_eq!(bucket.add(7), Ok(7));
         assert_eq!(bucket.points(), 7);
         assert!(bucket.add(4).is_err());
         assert_eq!(bucket.points(), 7);
 
         sleep(Duration::from_secs(1)).await;
-        assert!(bucket.add(4).is_ok());
+        assert_eq!(bucket.add(4), Ok(10));
+        assert_eq!(bucket.points(), 10);
+    }
+
+    #[test]
+    fn saturating_add_points() {
+        let bucket = LeakyBucket::empty(10, 1);
+        assert_eq!(bucket.saturating_add(7), 7);
+        assert_eq!(bucket.points(), 7);
+        assert_eq!(bucket.saturating_add(4), 10);
+        assert_eq!(bucket.points(), 10);
+        assert_eq!(bucket.saturating_add(4), 10);
         assert_eq!(bucket.points(), 10);
     }
 }
