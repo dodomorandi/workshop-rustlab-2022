@@ -30,7 +30,7 @@ use workshop_rustlab_2022::{
         MAX_BUCKET_CAPACITY,
     },
     leaky_bucket::MaxCapacityError,
-    LeakyBucket, BUCKET_CAPACITY_HEADER, BUCKET_POINTS_HEADER,
+    LeakyBucket, BUCKET_CAPACITY_HEADER, BUCKET_LEAK_PER_SECOND_HEADER, BUCKET_POINTS_HEADER,
 };
 
 const RAW_DATABASE: &str = include_str!("../../../assets/database.json");
@@ -97,6 +97,7 @@ enum Message {
 struct BucketInfo {
     points: u16,
     capacity: u16,
+    leak_per_second: u8,
 }
 
 impl IntoResponseParts for BucketInfo {
@@ -107,6 +108,7 @@ impl IntoResponseParts for BucketInfo {
             [
                 (BUCKET_POINTS_HEADER, self.points),
                 (BUCKET_CAPACITY_HEADER, self.capacity),
+                (BUCKET_LEAK_PER_SECOND_HEADER, self.leak_per_second.into()),
             ]
             .into_iter()
             .map(|(header, value)| {
@@ -136,6 +138,7 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
             Message::Query { query, replier } => {
                 let cost = calc_query_cost(&query);
                 let capacity = bucket.capacity();
+                let leak_per_second = bucket.leak_per_second();
                 let bucket_points = match bucket.add(cost) {
                     Ok(points) => points,
                     Err(MaxCapacityError(points)) => {
@@ -143,6 +146,7 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
                             request: cost,
                             points,
                             capacity,
+                            leak_per_second,
                         };
                         replier.send(Err(error)).unwrap();
                         continue;
@@ -167,6 +171,7 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
                 let bucket_info = BucketInfo {
                     points: bucket_points,
                     capacity,
+                    leak_per_second,
                 };
 
                 replier.send(Ok((bucket_info, response))).unwrap();

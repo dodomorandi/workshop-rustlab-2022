@@ -58,6 +58,11 @@ impl LeakyBucket {
         self.capacity
     }
 
+    /// Returns the leak per second of the bucket.
+    pub const fn leak_per_second(&self) -> u8 {
+        self.leak_per_second
+    }
+
     /// Returns the current points stored in the bucket.
     ///
     /// The internal state is updated depending on the last time the leaky bucket is _actively_
