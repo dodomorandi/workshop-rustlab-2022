@@ -8,6 +8,8 @@ use std::{
 
 use tokio::time::Instant;
 
+use crate::{BUCKET_CAPACITY_HEADER, BUCKET_LEAK_PER_SECOND_HEADER, BUCKET_POINTS_HEADER};
+
 /// A simple [leaky bucket] implementation.
 ///
 /// [leaky bucket]: https://en.wikipedia.org/wiki/Leaky_bucket
@@ -156,6 +158,79 @@ pub struct MaxCapacityError(
 impl Display for MaxCapacityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Cannot add to leaky bucket with {self.0} points, capacity exceeded")
+    }
+}
+
+impl TryFrom<&reqwest::header::HeaderMap> for LeakyBucket {
+    type Error = FromHeaderError;
+
+    fn try_from(headers: &reqwest::header::HeaderMap) -> Result<Self, Self::Error> {
+        let points = headers
+            .get(BUCKET_POINTS_HEADER)
+            .ok_or(FromHeaderError::NoPoints)?;
+        let capacity = headers
+            .get(BUCKET_CAPACITY_HEADER)
+            .ok_or(FromHeaderError::NoCapacity)?;
+        let leak_per_second = headers
+            .get(BUCKET_LEAK_PER_SECOND_HEADER)
+            .ok_or(FromHeaderError::NoLeakPerSecond)?;
+
+        let points = points
+            .to_str()
+            .ok()
+            .and_then(|points| points.parse().ok())
+            .ok_or(FromHeaderError::InvalidPoints)?;
+        let capacity = capacity
+            .to_str()
+            .ok()
+            .and_then(|capacity| capacity.parse().ok())
+            .ok_or(FromHeaderError::InvalidCapacity)?;
+        let leak_per_second = leak_per_second
+            .to_str()
+            .ok()
+            .and_then(|leak_per_second| leak_per_second.parse().ok())
+            .ok_or(FromHeaderError::InvalidLeakPerSecond)?;
+
+        Ok(Self::with_points(points, capacity, leak_per_second))
+    }
+}
+
+/// The possible errors when trying to convert a [`HeaderMap`] to a [`LeakyBucket`]
+///
+/// [`HeaderMap`]: `reqwest::header::HeaderMap`
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+pub enum FromHeaderError {
+    /// Missing _points_ header
+    NoPoints,
+
+    /// Missing _capacity_ header
+    NoCapacity,
+
+    /// Missing _leak per second_ header
+    NoLeakPerSecond,
+
+    /// Invalid _points_ header
+    InvalidPoints,
+
+    /// Invalid _capacity_ header
+    InvalidCapacity,
+
+    /// Invalid _leak per second_ header
+    InvalidLeakPerSecond,
+}
+
+impl fmt::Display for FromHeaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            FromHeaderError::NoPoints => "no point header",
+            FromHeaderError::NoCapacity => "no capacity header",
+            FromHeaderError::NoLeakPerSecond => "no leak per second header",
+            FromHeaderError::InvalidPoints => "invalid point header",
+            FromHeaderError::InvalidCapacity => "invalid point capacity",
+            FromHeaderError::InvalidLeakPerSecond => "invalid leak per second header",
+        };
+
+        f.write_str(s)
     }
 }
 
