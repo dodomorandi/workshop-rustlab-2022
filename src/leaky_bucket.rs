@@ -106,7 +106,7 @@ impl LeakyBucket {
 
     /// Add some points to the bucket, saturating to its capacity.
     ///
-    /// This will always succeds, because not all points are necessarily added. This behavior makes
+    /// This will always succeeds, because not all points are necessarily added. This behavior makes
     /// the function useful to _artificially_ add points to the bucket, but it should not be used
     /// in order to run an operation that must fail if the bucket is too full.
     pub fn saturating_add(&self, points: u16) -> u16 {
