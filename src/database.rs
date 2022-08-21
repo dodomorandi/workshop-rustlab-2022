@@ -100,6 +100,40 @@ pub enum ServerField {
     AttivitaCommercialiProduttive5,
 }
 
+impl ServerField {
+    #[must_use]
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            ServerField::GeoPoint2d => "geo_point_2d",
+            ServerField::GeoShape => "geo_shape",
+            ServerField::Name => "name",
+            ServerField::Etichetta => "etichetta",
+            ServerField::Notetesto => "notetesto",
+            ServerField::Numeroantico => "numeroantico",
+            ServerField::Numeromoderno => "numeromoderno",
+            ServerField::Link1 => "link1",
+            ServerField::Link2 => "link2",
+            ServerField::Link3 => "link3",
+            ServerField::Piani => "piani",
+            ServerField::Arcate => "arcate",
+            ServerField::Architravate => "architravate",
+            ServerField::ArchitravateConColonneDiLegno => "architravate_con_colonne_di_legno",
+            ServerField::Archivolti => "archivolti",
+            ServerField::Modiglioni => "modiglioni",
+            ServerField::MensoloniArchitravati => "mensoloni_architravati",
+            ServerField::StallaE => "stalla_e",
+            ServerField::FienileI => "fienile_i",
+            ServerField::RimessaE => "rimessa_e",
+            ServerField::ScuderiaE => "scuderia_e",
+            ServerField::AttivitaCommercialiProduttive1 => "attivita_commerciali_produttive1",
+            ServerField::AttivitaCommercialiProduttive2 => "attivita_commerciali_produttive2",
+            ServerField::AttivitaCommercialiProduttive3 => "attivita_commerciali_produttive3",
+            ServerField::AttivitaCommercialiProduttive4 => "attivita_commerciali_produttive4",
+            ServerField::AttivitaCommercialiProduttive5 => "attivita_commerciali_produttive5",
+        }
+    }
+}
+
 pub const FIELDS_LEN: u8 = 26;
 pub const DEFAULT_PAGE_SIZE: u16 = 10;
 pub const MAX_BUCKET_CAPACITY: u16 = 500;
