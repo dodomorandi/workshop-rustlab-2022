@@ -1,6 +1,6 @@
 #![warn(clippy::pedantic)]
 
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::Not};
 
 use serde::{Deserialize, Serialize};
 
@@ -63,7 +63,8 @@ pub mod geo_shape {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ServerQuery {
-    pub fields: Option<HashSet<ServerField>>,
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub fields: HashSet<ServerField>,
     pub page: Option<usize>,
     pub page_size: Option<u16>,
 }
@@ -108,8 +109,10 @@ pub const LEAK_PER_SECOND: u8 = 4;
 pub fn calc_query_cost(query: &ServerQuery) -> u16 {
     let fields_cost = query
         .fields
-        .as_ref()
-        .map_or_else(|| FIELDS_LEN.into(), HashSet::len)
+        .is_empty()
+        .not()
+        .then_some(query.fields.len())
+        .unwrap_or_else(|| FIELDS_LEN.into())
         .try_into()
         .unwrap_or(u16::MAX);
 

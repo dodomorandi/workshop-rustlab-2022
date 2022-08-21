@@ -3,7 +3,7 @@
 mod database;
 mod error;
 
-use std::{convert::Infallible, sync::Arc};
+use std::{convert::Infallible, ops::Not, sync::Arc};
 
 use axum::{
     extract::Query,
@@ -159,10 +159,14 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
                     .map(|page| {
                         page.iter()
                             .map(|entry| {
-                                query.fields.as_ref().map_or_else(
-                                    || PartialEntry::from(entry),
-                                    |fields| PartialEntry::from_entry_with_fields(entry, fields),
-                                )
+                                query
+                                    .fields
+                                    .is_empty()
+                                    .not()
+                                    .then(|| {
+                                        PartialEntry::from_entry_with_fields(entry, &query.fields)
+                                    })
+                                    .unwrap_or_else(|| PartialEntry::from(entry))
                             })
                             .collect()
                     })
