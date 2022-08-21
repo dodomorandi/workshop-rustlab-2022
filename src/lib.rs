@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 pub mod database;
 pub mod leaky_bucket;
 

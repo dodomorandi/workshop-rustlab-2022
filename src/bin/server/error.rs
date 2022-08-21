@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use std::fmt::{self, Display};
 
 use axum::{
@@ -18,10 +20,8 @@ pub enum Error {
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use Error::*;
-
         match self {
-            NotEnoughCapacity {
+            Error::NotEnoughCapacity {
                 request,
                 points,
                 capacity,
@@ -38,10 +38,8 @@ impl Display for Error {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        use Error::*;
-
         match self {
-            error @ NotEnoughCapacity {
+            error @ Error::NotEnoughCapacity {
                 points, capacity, ..
             } => {
                 let bucket_info = BucketInfo { points, capacity };

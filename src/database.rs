@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
@@ -45,7 +47,7 @@ pub enum GeoShape {
 }
 
 pub mod geo_shape {
-    use super::*;
+    use super::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Feature {
@@ -102,12 +104,12 @@ pub const DEFAULT_PAGE_SIZE: u16 = 10;
 pub const MAX_BUCKET_CAPACITY: u16 = 500;
 pub const LEAK_PER_SECOND: u8 = 4;
 
+#[must_use]
 pub fn calc_query_cost(query: &ServerQuery) -> u16 {
     let fields_cost = query
         .fields
         .as_ref()
-        .map(|fields| fields.len())
-        .unwrap_or_else(|| FIELDS_LEN.into())
+        .map_or_else(|| FIELDS_LEN.into(), HashSet::len)
         .try_into()
         .unwrap_or(u16::MAX);
 

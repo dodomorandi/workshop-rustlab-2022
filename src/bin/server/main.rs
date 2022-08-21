@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 mod database;
 mod error;
 
@@ -153,13 +155,10 @@ async fn handler(database: &[Entry], mut receiver: Receiver<Message>) {
                     .map(|page| {
                         page.iter()
                             .map(|entry| {
-                                query
-                                    .fields
-                                    .as_ref()
-                                    .map(|fields| {
-                                        PartialEntry::from_entry_with_fields(entry, fields)
-                                    })
-                                    .unwrap_or_else(|| PartialEntry::from(entry))
+                                query.fields.as_ref().map_or_else(
+                                    || PartialEntry::from(entry),
+                                    |fields| PartialEntry::from_entry_with_fields(entry, fields),
+                                )
                             })
                             .collect()
                     })

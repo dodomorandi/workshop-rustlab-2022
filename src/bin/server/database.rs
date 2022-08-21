@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use std::collections::HashSet;
 
 use serde::Serialize;
@@ -37,8 +39,6 @@ pub struct PartialEntry<'a> {
 
 impl<'a> PartialEntry<'a> {
     pub fn from_entry_with_fields(entry: &'a Entry, fields: &HashSet<ServerField>) -> Self {
-        use ServerField::*;
-
         let mut out = Self::default();
 
         macro_rules! field {
@@ -49,32 +49,44 @@ impl<'a> PartialEntry<'a> {
 
         for field in fields {
             match field {
-                GeoPoint2d => field!(geo_point_2d),
-                GeoShape => field!(geo_shape),
-                Name => field!(name),
-                Etichetta => field!(etichetta),
-                Notetesto => field!(notetesto),
-                Numeroantico => field!(numeroantico),
-                Numeromoderno => field!(numeromoderno),
-                Link1 => field!(link1),
-                Link2 => field!(link2),
-                Link3 => field!(link3),
-                Piani => field!(piani),
-                Arcate => field!(arcate),
-                Architravate => field!(architravate),
-                ArchitravateConColonneDiLegno => field!(architravate_con_colonne_di_legno),
-                Archivolti => field!(archivolti),
-                Modiglioni => field!(modiglioni),
-                MensoloniArchitravati => field!(mensoloni_architravati),
-                StallaE => field!(stalla_e),
-                FienileI => field!(fienile_i),
-                RimessaE => field!(rimessa_e),
-                ScuderiaE => field!(scuderia_e),
-                AttivitaCommercialiProduttive1 => field!(attivita_commerciali_produttive_1),
-                AttivitaCommercialiProduttive2 => field!(attivita_commerciali_produttive_2),
-                AttivitaCommercialiProduttive3 => field!(attivita_commerciali_produttive_3),
-                AttivitaCommercialiProduttive4 => field!(attivita_commerciali_produttive_4),
-                AttivitaCommercialiProduttive5 => field!(attivita_commerciali_produttive_5),
+                ServerField::GeoPoint2d => field!(geo_point_2d),
+                ServerField::GeoShape => field!(geo_shape),
+                ServerField::Name => field!(name),
+                ServerField::Etichetta => field!(etichetta),
+                ServerField::Notetesto => field!(notetesto),
+                ServerField::Numeroantico => field!(numeroantico),
+                ServerField::Numeromoderno => field!(numeromoderno),
+                ServerField::Link1 => field!(link1),
+                ServerField::Link2 => field!(link2),
+                ServerField::Link3 => field!(link3),
+                ServerField::Piani => field!(piani),
+                ServerField::Arcate => field!(arcate),
+                ServerField::Architravate => field!(architravate),
+                ServerField::ArchitravateConColonneDiLegno => {
+                    field!(architravate_con_colonne_di_legno);
+                }
+                ServerField::Archivolti => field!(archivolti),
+                ServerField::Modiglioni => field!(modiglioni),
+                ServerField::MensoloniArchitravati => field!(mensoloni_architravati),
+                ServerField::StallaE => field!(stalla_e),
+                ServerField::FienileI => field!(fienile_i),
+                ServerField::RimessaE => field!(rimessa_e),
+                ServerField::ScuderiaE => field!(scuderia_e),
+                ServerField::AttivitaCommercialiProduttive1 => {
+                    field!(attivita_commerciali_produttive_1);
+                }
+                ServerField::AttivitaCommercialiProduttive2 => {
+                    field!(attivita_commerciali_produttive_2);
+                }
+                ServerField::AttivitaCommercialiProduttive3 => {
+                    field!(attivita_commerciali_produttive_3);
+                }
+                ServerField::AttivitaCommercialiProduttive4 => {
+                    field!(attivita_commerciali_produttive_4);
+                }
+                ServerField::AttivitaCommercialiProduttive5 => {
+                    field!(attivita_commerciali_produttive_5);
+                }
             }
         }
 
