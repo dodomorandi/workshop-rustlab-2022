@@ -6,7 +6,6 @@ mod error;
 use std::{convert::Infallible, ops::Not, sync::Arc};
 
 use axum::{
-    extract::Query,
     http::{header::HeaderName, HeaderValue},
     response::{IntoResponse, IntoResponseParts, Response, ResponseParts},
     routing::get,
@@ -15,6 +14,7 @@ use axum::{
 use database::PartialEntry;
 use error::Error;
 use rand::{thread_rng, Rng};
+use serde_qs::axum::QsQuery;
 use tokio::{
     join,
     sync::{
@@ -69,7 +69,7 @@ async fn main() {
 }
 
 async fn root(
-    Query(params): Query<ServerQuery>,
+    QsQuery(params): QsQuery<ServerQuery>,
     Extension(state): Extension<AppState>,
 ) -> impl IntoResponse {
     let (replier, receiver) = oneshot::channel();
