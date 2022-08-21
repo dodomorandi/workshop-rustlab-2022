@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, ops::Not};
 
+use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,6 +68,25 @@ pub struct ServerQuery {
     pub fields: HashSet<ServerField>,
     pub page: Option<usize>,
     pub page_size: Option<u16>,
+}
+
+impl ServerQuery {
+    /// A simple helper to create a [`Request`] instance using the current fields.
+    ///
+    /// [`Request`]: `reqwest::Request`
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
+    pub fn create_request(&self, port: Option<u16>) -> reqwest::Request {
+        let mut url = Url::parse("http://localhost").unwrap();
+        url.set_port(port).unwrap();
+        let mut request = reqwest::Request::new(Method::GET, url);
+
+        request.url_mut().set_query(Some(
+            &serde_qs::to_string(self).expect("all fields should be valid"),
+        ));
+
+        request
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
