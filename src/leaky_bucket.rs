@@ -119,6 +119,26 @@ impl LeakyBucket {
     pub fn available(&self) -> u16 {
         self.capacity - self.points()
     }
+
+    /// Calculates the waiting time in order to add some points to the bucket.
+    ///
+    /// This can be useful to evaluate when it is possible to perform a request to a service using
+    /// the leaky bucket algorithm. In this way a failing request can be avoided using a likely
+    /// estimation from local data.
+    pub fn wait_time_to_use(&self, points: u16) -> Duration {
+        let cur_points = self.points();
+        let available = self.capacity - cur_points;
+        match points.checked_sub(available) {
+            None => Duration::ZERO,
+            Some(to_restore) => {
+                let seconds_needed = to_restore / u16::from(self.leak_per_second)
+                    + u16::from(to_restore % u16::from(self.leak_per_second) != 0);
+
+                Duration::from_secs(seconds_needed.into())
+                    - Duration::from_nanos(self.last_time.get().remainder_nanos.into())
+            }
+        }
+    }
 }
 
 /// An error representing an operation that would make the points exceed the capacity.
