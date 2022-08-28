@@ -2,6 +2,7 @@ use std::future::ready;
 
 use futures_util::{future, stream, TryStreamExt};
 use reqwest::Client;
+use serde::Deserialize;
 use workshop_rustlab_2022::database::{self, GeoPoint2d};
 
 use crate::my_stream::MyStream;
@@ -33,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct MyEntry {
     pub geo_point_2d: GeoPoint2d,
     pub name: String,

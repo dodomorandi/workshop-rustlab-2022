@@ -1,5 +1,6 @@
 use std::{
     fmt,
+    future::Future,
     marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
@@ -7,10 +8,15 @@ use std::{
 
 use futures_util::{future::BoxFuture, ready, FutureExt, Stream};
 use reqwest::{Client, StatusCode};
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 use workshop_rustlab_2022::{
-    database::{calc_query_cost, ServerField, ServerQuery, LEAK_PER_SECOND, MAX_BUCKET_CAPACITY},
+    database::{
+        calc_query_cost, ServerField, ServerQuery, DEFAULT_PAGE_SIZE, LEAK_PER_SECOND,
+        MAX_BUCKET_CAPACITY,
+    },
     LeakyBucket,
 };
 
@@ -26,19 +32,25 @@ pub(crate) struct MyStream<T> {
 }
 
 type HeadRequestFuture = BoxFuture<'static, Result<reqwest::Response, reqwest::Error>>;
+type BodyRequestFuture = BoxFuture<'static, Result<String, reqwest::Error>>;
 
 enum Inner {
     Empty,
     HeadRequest(HeadRequestFuture),
+    BodyRequest(BodyRequestFuture),
     Done,
 }
 
 #[derive(Debug)]
 pub(crate) enum Error {
     Reqwest(reqwest::Error),
+    SerdeJson(serde_json::Error),
 }
 
-impl<T> Stream for MyStream<T> {
+impl<T> Stream for MyStream<T>
+where
+    T: for<'de> Deserialize<'de> + 'static,
+{
     type Item = Result<T, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -57,6 +69,10 @@ impl<T> Stream for MyStream<T> {
             Inner::HeadRequest(fut) => {
                 let head_data = ready!(fut.as_mut().poll(cx));
                 this.handle_head_data_result(head_data, cx)
+            }
+            Inner::BodyRequest(fut) => {
+                let content_data = ready!(fut.as_mut().poll(cx));
+                this.handle_content_data_result(content_data)
             }
             Inner::Done => Poll::Ready(None),
         }
@@ -88,17 +104,26 @@ impl<T> MyStream<T> {
         }
     }
 
+    #[inline]
     fn request_next_page(&mut self) -> HeadRequestFuture {
         self.last_call = Some(Instant::now());
-        self.client
+        let future = self
+            .client
             .execute(self.query.create_request(self.port))
-            .boxed()
+            .boxed();
+        self.query.page = Some(self.query.page.map(|page| page + 1).unwrap_or(1));
+        future
     }
+}
 
+impl<T> MyStream<T>
+where
+    T: for<'de> Deserialize<'de> + 'static,
+{
     fn handle_head_data_result(
         &mut self,
         response: Result<reqwest::Response, reqwest::Error>,
-        _cx: &mut Context,
+        cx: &mut Context,
     ) -> Poll<Option<<Self as Stream>::Item>> {
         let response = match response {
             Ok(response) => response,
@@ -134,8 +159,15 @@ impl<T> MyStream<T> {
         }
 
         match response.error_for_status() {
-            Ok(_response) => {
-                todo!("handle response")
+            Ok(response) => {
+                let mut fut = Box::pin(response.text());
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(content) => self.handle_content_data_result(content),
+                    Poll::Pending => {
+                        self.inner = Inner::BodyRequest(fut);
+                        Poll::Pending
+                    }
+                }
             }
             Err(err) => match err.status() {
                 Some(StatusCode::TOO_MANY_REQUESTS) => {
@@ -148,12 +180,77 @@ impl<T> MyStream<T> {
             },
         }
     }
+
+    fn handle_content_data_result(
+        &mut self,
+        content: Result<String, reqwest::Error>,
+    ) -> Poll<Option<<MyStream<T> as Stream>::Item>> {
+        let content = match content {
+            Ok(content) => content,
+            Err(err) => {
+                self.inner = Inner::Done;
+                return Poll::Ready(Some(Err(err.into())));
+            }
+        };
+
+        enum HasData {
+            False,
+            True { has_another_page: bool },
+        }
+
+        impl Default for HasData {
+            fn default() -> Self {
+                Self::True {
+                    has_another_page: true,
+                }
+            }
+        }
+
+        let has_data = serde_json::from_str(&content)
+            .map(|json| match json {
+                Value::Object(obj) => {
+                    obj.is_empty()
+                        .then_some(HasData::False)
+                        .unwrap_or_else(|| HasData::True {
+                            has_another_page: obj.len()
+                                == usize::from(self.query.page_size.unwrap_or(DEFAULT_PAGE_SIZE)),
+                        })
+                }
+                Value::Array(arr) => {
+                    arr.is_empty()
+                        .then_some(HasData::False)
+                        .unwrap_or_else(|| HasData::True {
+                            has_another_page: arr.len()
+                                == usize::from(self.query.page_size.unwrap_or(DEFAULT_PAGE_SIZE)),
+                        })
+                }
+                _ => Default::default(),
+            })
+            .unwrap_or_default();
+
+        let response = match has_data {
+            HasData::False => None,
+            HasData::True { has_another_page } => {
+                let response = serde_json::from_str(&content).map_err(Error::from);
+                self.inner = if has_another_page {
+                    Inner::HeadRequest(self.request_next_page())
+                } else {
+                    Inner::Done
+                };
+
+                Some(response)
+            }
+        };
+
+        Poll::Ready(response)
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Reqwest(err) => write!(f, "Reqwest error: {err}"),
+            Self::SerdeJson(err) => write!(f, "Json error: {err}"),
         }
     }
 }
@@ -163,5 +260,11 @@ impl std::error::Error for Error {}
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Self {
         Self::Reqwest(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Self::SerdeJson(error)
     }
 }
