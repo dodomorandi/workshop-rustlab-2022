@@ -2,6 +2,7 @@
 name = "workshop-rustlab-2022"
 version = "0.1.0"
 edition = "2021"
+default-run = "workshop-rustlab-2022"
 
 [dependencies]
 axum = { version = "0.5.13", default-features = false, features = ["http1", "query", "json", "tower-log"] }
