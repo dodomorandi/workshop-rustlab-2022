@@ -58,35 +58,35 @@ where
     type Item = Result<T, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut this = self.as_mut().project();
-        match this.inner.as_mut().project() {
-            InnerProj::Empty => match this.request_next_page() {
-                Ok(request_fut) => self.handle_request_future(request_fut, cx),
-                Err(sleep) => {
-                    let mut this = self.as_mut().project();
-                    let sleep = this.set_sleep(sleep);
-                    ready!(sleep.poll(cx));
-                    this.inner.set(Inner::Empty);
-                    self.poll_next(cx)
-                }
-            },
-            InnerProj::Request(fut) => {
-                let result = ready!(fut.as_mut().poll(cx));
-                self.handle_request_result(result, cx)
-            }
-            InnerProj::Sleep(sleep) => {
-                ready!(sleep.poll(cx));
-                match this.request_next_page() {
-                    Ok(fut) => self.handle_request_future(fut, cx),
+        loop {
+            let mut this = self.as_mut().project();
+            match this.inner.as_mut().project() {
+                InnerProj::Empty => match this.request_next_page() {
+                    Ok(request_fut) => break self.handle_request_future(request_fut, cx),
                     Err(sleep) => {
                         let mut this = self.as_mut().project();
                         let sleep = this.set_sleep(sleep);
                         ready!(sleep.poll(cx));
-                        self.poll_next(cx)
+                        this.inner.set(Inner::Empty);
+                    }
+                },
+                InnerProj::Request(fut) => {
+                    let result = ready!(fut.as_mut().poll(cx));
+                    break self.handle_request_result(result, cx);
+                }
+                InnerProj::Sleep(sleep) => {
+                    ready!(sleep.poll(cx));
+                    match this.request_next_page() {
+                        Ok(fut) => break self.handle_request_future(fut, cx),
+                        Err(sleep) => {
+                            let mut this = self.as_mut().project();
+                            let sleep = this.set_sleep(sleep);
+                            ready!(sleep.poll(cx));
+                        }
                     }
                 }
+                InnerProj::Done => break Poll::Ready(None),
             }
-            InnerProj::Done => Poll::Ready(None),
         }
     }
 }
