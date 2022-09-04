@@ -7,6 +7,7 @@ default-run = "workshop-rustlab-2022"
 [dependencies]
 axum = { version = "0.5.13", default-features = false, features = ["http1", "query", "json", "tower-log"] }
 futures-util = "0.3.23"
+pin-project = "1.0.12"
 rand = "0.8.5"
 reqwest = { version = "0.11.11", default-features = false }
 serde = { version = "1.0.140", features = ["derive"] }
