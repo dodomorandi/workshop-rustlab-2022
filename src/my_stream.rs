@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::{future::BoxFuture, ready, FutureExt, Stream};
+use futures_util::{future::BoxFuture, ready, stream::FusedStream, FutureExt, Stream};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::Value;
@@ -319,6 +319,15 @@ where
                 Poll::Pending
             }
         }
+    }
+}
+
+impl<T> FusedStream for MyStream<T>
+where
+    T: for<'de> Deserialize<'de> + 'static,
+{
+    fn is_terminated(&self) -> bool {
+        matches!(self.inner, Inner::Done)
     }
 }
 
