@@ -4,13 +4,14 @@ use std::{
     marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use futures_util::{future::BoxFuture, ready, FutureExt, Stream};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::time::Instant;
+use tokio::time::{sleep, Instant, Sleep};
 use tracing::{debug, warn};
 use workshop_rustlab_2022::{
     database::{
@@ -38,6 +39,7 @@ enum Inner {
     Empty,
     HeadRequest(HeadRequestFuture),
     BodyRequest(BodyRequestFuture),
+    Sleep(Pin<Box<Sleep>>),
     Done,
 }
 
@@ -57,14 +59,8 @@ where
         let this = self.as_mut().get_mut();
         match &mut this.inner {
             Inner::Empty => {
-                let mut reqwest_fut = this.request_next_page();
-                match reqwest_fut.as_mut().poll(cx) {
-                    Poll::Ready(head_data) => this.handle_head_data_result(head_data, cx),
-                    Poll::Pending => {
-                        this.inner = Inner::HeadRequest(reqwest_fut);
-                        Poll::Pending
-                    }
-                }
+                let fut = this.request_next_page();
+                self.handle_head_data_future(fut, cx)
             }
             Inner::HeadRequest(fut) => {
                 let head_data = ready!(fut.as_mut().poll(cx));
@@ -73,6 +69,11 @@ where
             Inner::BodyRequest(fut) => {
                 let content_data = ready!(fut.as_mut().poll(cx));
                 this.handle_content_data_result(content_data)
+            }
+            Inner::Sleep(sleep) => {
+                ready!(sleep.as_mut().poll(cx));
+                let fut = this.request_next_page();
+                self.handle_head_data_future(fut, cx)
             }
             Inner::Done => Poll::Ready(None),
         }
@@ -113,6 +114,28 @@ impl<T> MyStream<T> {
             .boxed();
         self.query.page = Some(self.query.page.map(|page| page + 1).unwrap_or(1));
         future
+    }
+
+    fn get_wait_time_for_request(&self) -> Option<std::time::Duration> {
+        self.bucket.as_ref().and_then(|bucket| {
+            let result = bucket.add(self.query_cost);
+            if let Ok(new_points) = result.as_ref() {
+                debug!(
+                    "Added {} points to bucket, reached {new_points}/{}",
+                    self.query_cost,
+                    bucket.capacity()
+                );
+            }
+            result.err().map(|_| {
+                let wait_time = bucket.wait_time_to_use(self.query_cost);
+                debug!(
+                    "Cannot add {} points to bucket, need to wait {} milliseconds",
+                    self.query_cost,
+                    wait_time.as_millis()
+                );
+                wait_time
+            })
+        })
     }
 }
 
@@ -171,7 +194,23 @@ where
             }
             Err(err) => match err.status() {
                 Some(StatusCode::TOO_MANY_REQUESTS) => {
-                    todo!("create a sleep future and poll it")
+                    let wait_time = self.get_wait_time_for_request().unwrap_or_else(|| {
+                        // Rough estimation
+                        Duration::from_secs(
+                            (self.query_cost / u16::from(LEAK_PER_SECOND) + 1).into(),
+                        )
+                    });
+                    warn!(
+                        "Performed too many requests, waiting {} milliseconds",
+                        wait_time.as_millis()
+                    );
+
+                    let mut sleep = Box::pin(sleep(wait_time));
+                    if sleep.as_mut().poll(cx).is_pending() {
+                        self.inner = Inner::Sleep(sleep);
+                        return Poll::Pending;
+                    }
+                    Pin::new(self).poll_next(cx)
                 }
                 _ => {
                     self.inner = Inner::Done;
@@ -243,6 +282,20 @@ where
         };
 
         Poll::Ready(response)
+    }
+
+    fn handle_head_data_future(
+        mut self: Pin<&mut Self>,
+        mut future: HeadRequestFuture,
+        cx: &mut Context,
+    ) -> Poll<Option<<Self as Stream>::Item>> {
+        match future.as_mut().poll(cx) {
+            Poll::Ready(head_data) => self.handle_head_data_result(head_data, cx),
+            Poll::Pending => {
+                self.inner = Inner::HeadRequest(future);
+                Poll::Pending
+            }
+        }
     }
 }
 
