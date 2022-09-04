@@ -1,3 +1,5 @@
+#![feature(type_alias_impl_trait)]
+
 use std::future::ready;
 
 use futures_util::{future, stream, TryStreamExt};

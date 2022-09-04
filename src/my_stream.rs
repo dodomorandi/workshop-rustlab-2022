@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::{future::BoxFuture, ready, stream::FusedStream, FutureExt, Stream};
+use futures_util::{ready, stream::FusedStream, FutureExt, Stream};
 use pin_project::pin_project;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
@@ -33,14 +33,22 @@ pub(crate) struct MyStream<T> {
     inner: Inner<T>,
 }
 
-type RequestFuture<T> = BoxFuture<'static, ResultWithBucket<T>>;
+type RequestFuture<T> = impl Future<Output = ResultWithBucket<T>>;
 type ResultWithBucket<T> = (Result<Option<(T, bool)>, RequestError>, Option<LeakyBucket>);
 
 #[pin_project(project = InnerProj)]
+// We still need this for our "exercise" (in production you would need to perform benchmarks),
+// because this is completely bonkers: `tokio::time::Sleep` is currently 640 bytes.
+//
+// This is a bit unfortunate because the internal `StateCell` has an `AtomicWaker` padded and
+// aligned to 128 bytes, which not only creates a huge memory overhead for each waker (without
+// padding, it is 24 bytes), but it also lead to a 119 bytes padding for each `StateCell`, wasting
+// a **huge** amount of space. If you want to have fun optimizing Tokio, I think that there is some
+// work to do :)
 #[allow(clippy::large_enum_variant)]
 enum Inner<T> {
     Empty,
-    Request(RequestFuture<T>),
+    Request(#[pin] RequestFuture<T>),
     Sleep(#[pin] Sleep),
     Done,
 }
@@ -62,7 +70,7 @@ where
             let mut this = self.as_mut().project();
             match this.inner.as_mut().project() {
                 InnerProj::Empty => match this.request_next_page() {
-                    Ok(request_fut) => break self.handle_request_future(request_fut, cx),
+                    Ok(request_fut) => this.inner.set(Inner::Request(request_fut)),
                     Err(sleep) => {
                         let mut this = self.as_mut().project();
                         let sleep = this.set_sleep(sleep);
@@ -71,17 +79,16 @@ where
                     }
                 },
                 InnerProj::Request(fut) => {
-                    let result = ready!(fut.as_mut().poll(cx));
+                    let result = ready!(fut.poll(cx));
                     break self.handle_request_result(result, cx);
                 }
                 InnerProj::Sleep(sleep) => {
                     ready!(sleep.poll(cx));
                     match this.request_next_page() {
-                        Ok(fut) => break self.handle_request_future(fut, cx),
+                        Ok(fut) => this.inner.set(Inner::Request(fut)),
                         Err(sleep) => {
                             let mut this = self.as_mut().project();
-                            let sleep = this.set_sleep(sleep);
-                            ready!(sleep.poll(cx));
+                            this.inner.set(Inner::Sleep(sleep));
                         }
                     }
                 }
@@ -154,6 +161,14 @@ impl<T> MyStreamProj<'_, T> {
             _ => unreachable!(),
         }
     }
+
+    fn set_request(&mut self, request: RequestFuture<T>) -> Pin<&mut RequestFuture<T>> {
+        self.inner.set(Inner::Request(request));
+        match self.inner.as_mut().project() {
+            InnerProj::Request(request) => request,
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl<T> MyStream<T>
@@ -193,7 +208,12 @@ where
 
                 loop {
                     match this.request_next_page() {
-                        Ok(request) => break self.handle_request_future(request, cx),
+                        Ok(request_future) => {
+                            let request_future = this.set_request(request_future);
+                            let response = ready!(request_future.poll(cx));
+                            // Man, you're fast!
+                            break self.handle_request_result(response, cx);
+                        }
                         Err(sleep) => {
                             warn!(
                                 "Still unable to perform a request after sleeping. Sleeping again."
@@ -207,20 +227,6 @@ where
             Err(RequestError::Other(err)) => {
                 self.project().inner.set(Inner::Done);
                 Poll::Ready(Some(Err(err)))
-            }
-        }
-    }
-
-    fn handle_request_future(
-        self: Pin<&mut Self>,
-        mut future: RequestFuture<T>,
-        cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
-        match future.as_mut().poll(cx) {
-            Poll::Ready(head_data) => self.handle_request_result(head_data, cx),
-            Poll::Pending => {
-                self.project().inner.set(Inner::Request(future));
-                Poll::Pending
             }
         }
     }
