@@ -58,10 +58,22 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let this = self.as_mut().get_mut();
         match &mut this.inner {
-            Inner::Empty => {
-                let fut = this.request_next_page();
-                self.handle_head_data_future(fut, cx)
-            }
+            Inner::Empty => match this.request_next_page_if_available_points() {
+                Ok(request_fut) => self.handle_head_data_future(request_fut, cx),
+                Err(sleep) => {
+                    let mut sleep = Box::pin(sleep);
+                    match sleep.as_mut().poll(cx) {
+                        Poll::Pending => {
+                            self.inner = Inner::Sleep(sleep);
+                            Poll::Pending
+                        }
+                        Poll::Ready(()) => {
+                            self.inner = Inner::Empty;
+                            self.poll_next(cx)
+                        }
+                    }
+                }
+            },
             Inner::HeadRequest(fut) => {
                 let head_data = ready!(fut.as_mut().poll(cx));
                 this.handle_head_data_result(head_data, cx)
@@ -114,6 +126,14 @@ impl<T> MyStream<T> {
             .boxed();
         self.query.page = Some(self.query.page.map(|page| page + 1).unwrap_or(1));
         future
+    }
+
+    #[inline]
+    fn request_next_page_if_available_points(&mut self) -> Result<HeadRequestFuture, Sleep> {
+        match self.get_wait_time_for_request() {
+            Some(wait_time) => Err(sleep(wait_time)),
+            None => Ok(self.request_next_page()),
+        }
     }
 
     fn get_wait_time_for_request(&self) -> Option<std::time::Duration> {
@@ -272,7 +292,10 @@ where
             HasData::True { has_another_page } => {
                 let response = serde_json::from_str(&content).map_err(Error::from);
                 self.inner = if has_another_page {
-                    Inner::HeadRequest(self.request_next_page())
+                    match self.request_next_page_if_available_points() {
+                        Ok(request_fut) => Inner::HeadRequest(request_fut),
+                        Err(sleep) => Inner::Sleep(Box::pin(sleep)),
+                    }
                 } else {
                     Inner::Done
                 };
