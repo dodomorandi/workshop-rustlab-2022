@@ -1,5 +1,7 @@
 #![warn(clippy::pedantic)]
 
+//! Common error handling.
+
 use std::fmt::{self, Display};
 
 use axum::{
@@ -9,12 +11,25 @@ use axum::{
 
 use crate::BucketInfo;
 
+/// An error type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
+    /// The [`LeakyBucket`] does not have enough free capacity for a specific request.
+    ///
+    /// [`LeakyBucket`]: `workshop_rustlab_2022::leaky_bucket::LeakyBucket`
     NotEnoughCapacity {
+        /// The points of the request.
         request: u16,
+
+        /// The current points in the leaky bucket.
         points: u16,
+
+        /// The capacity of the leaky bucket.
         capacity: u16,
+
+        /// The _leak_ of the bucket for each second.
+        ///
+        /// Every second the bucket is going to empty by this value.
         leak_per_second: u8,
     },
 }
@@ -40,6 +55,9 @@ impl Display for Error {
 }
 
 impl IntoResponse for Error {
+    /// Convert `Error` into an axum [`Response`].
+    ///
+    /// [`Response`]: axum::response::Response
     fn into_response(self) -> Response {
         match self {
             error @ Error::NotEnoughCapacity {

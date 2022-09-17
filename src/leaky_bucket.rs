@@ -1,5 +1,9 @@
 #![warn(clippy::pedantic)]
 
+//! A simple [leaky bucket] implementation.
+//!
+//! [leaky bucket]: https://en.wikipedia.org/wiki/Leaky_bucket
+
 use std::{
     cell::Cell,
     fmt::{self, Display},
@@ -21,6 +25,10 @@ pub struct LeakyBucket {
     last_time: Cell<LastTime>,
 }
 
+/// Last time a request has been performed.
+///
+/// This keeps the remainder in nanoseconds in order to do not lose the time passed since the
+/// beginning of the _current second_ across different requests.
 #[derive(Clone, Copy, Debug)]
 struct LastTime {
     instant: Instant,

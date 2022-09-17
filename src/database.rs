@@ -1,10 +1,13 @@
 #![warn(clippy::pedantic)]
 
+//! Helper structures and functions to easily interact with the example database.
+
 use std::{collections::HashSet, ops::Not};
 
 use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
 
+/// A single entry of the database.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Entry {
     pub geo_point_2d: GeoPoint2d,
@@ -35,12 +38,17 @@ pub struct Entry {
     pub attivita_commerciali_produttive_5: String,
 }
 
+/// A geographic point with longitude and latitude.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GeoPoint2d {
+    /// The longitude.
     pub lon: f64,
+
+    /// The latitude.
     pub lat: f64,
 }
 
+/// A geographic shape.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum GeoShape {
@@ -48,6 +56,8 @@ pub enum GeoShape {
 }
 
 pub mod geo_shape {
+    //! The supported types of geographic shapes.
+
     use super::{Deserialize, Serialize};
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,11 +72,25 @@ pub mod geo_shape {
     }
 }
 
+/// The representation of the HTTP query supported by the server.
+///
+/// This type is exposed in order to make both the server and eventual clients share the same kind
+/// of query. This should simplify writing a working client.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ServerQuery {
+    /// The fields to include in the request. Keep in mind that you would need to create a
+    /// `CustomEntry` struct based on [`Entry`] containing only the specified `fields`.
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub fields: HashSet<ServerField>,
+
+    /// The page requested.
+    ///
+    /// If omitted, the first page is implied.
     pub page: Option<usize>,
+
+    /// The size of the page.
+    ///
+    /// If omitted, [`DEFAULT_PAGE_SIZE`] is implied.
     pub page_size: Option<u16>,
 }
 
@@ -89,6 +113,9 @@ impl ServerQuery {
     }
 }
 
+/// The possible fields for the query/response.
+///
+/// All the variants have a direct relationship with a fields in [`Entry`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerField {
@@ -121,6 +148,7 @@ pub enum ServerField {
 }
 
 impl ServerField {
+    /// Return the string representation of the field.
     #[must_use]
     pub fn to_str(&self) -> &'static str {
         match self {
@@ -154,11 +182,26 @@ impl ServerField {
     }
 }
 
+/// The number of fields in [`Entry`].
 pub const FIELDS_LEN: u8 = 26;
+
+/// The default page size for a request.
+///
+/// See [`ServerQuery::page_size`].
 pub const DEFAULT_PAGE_SIZE: u16 = 10;
+
+/// The default max bucket capacity.
 pub const MAX_BUCKET_CAPACITY: u16 = 500;
+
+/// The default leaky bucket leak-per-second.
 pub const LEAK_PER_SECOND: u8 = 4;
 
+/// Calculate the cost of a given query.
+///
+/// This is useful to evaluate if a [`LeakyBucket`] has enough free capacity to handle a specific
+/// request.
+///
+/// [`LeakyBucket`]: crate::leaky_bucket::LeakyBucket
 #[must_use]
 pub fn calc_query_cost(query: &ServerQuery) -> u16 {
     let fields_cost = query
